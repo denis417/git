@@ -32,6 +32,7 @@ git subtree merge --prefix=<prefix> <commit>
 git subtree split --prefix=<prefix> [<commit>]
 git subtree pull  --prefix=<prefix> <repository> <ref>
 git subtree push  --prefix=<prefix> <repository> <refspec>
+git subtree map   --prefix=<prefix> <mainline> <subtree>
 --
 h,help        show the help
 q             quiet
@@ -133,7 +134,7 @@ main () {
 	done
 	arg_command=$1
 	case "$arg_command" in
-	add|merge|pull)
+	add|merge|pull|map)
 		allow_addmerge=1
 		;;
 	split|push)
@@ -896,6 +897,21 @@ cmd_add_commit () {
 	git reset "$commit" || exit $?
 
 	say >&2 "Added dir '$dir'"
+}
+
+cmd_map () {
+	oldrev="$1"
+	newrev="$2"
+
+	if test -z "$oldrev"
+	then
+		die "You must provide a revision to map"
+	fi
+
+	cache_setup || exit $?
+	cache_set "$oldrev" "$newrev"
+
+	say "Mapped $oldrev => $newrev"
 }
 
 # Usage: cmd_split [REV]
