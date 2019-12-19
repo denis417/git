@@ -33,6 +33,8 @@ git subtree split --prefix=<prefix> [<commit>]
 git subtree pull  --prefix=<prefix> <repository> <ref>
 git subtree push  --prefix=<prefix> <repository> <refspec>
 git subtree map   --prefix=<prefix> <mainline> <subtree>
+git subtree ignore --prefix=<prefix> <commit>
+git subtree use    --prefix=<prefix> <commit>
 --
 h,help        show the help
 q             quiet
@@ -134,7 +136,7 @@ main () {
 	done
 	arg_command=$1
 	case "$arg_command" in
-	add|merge|pull|map)
+	add|merge|pull|map|ignore|use)
 		allow_addmerge=1
 		;;
 	split|push)
@@ -494,6 +496,18 @@ find_mainline_ref () {
 			;;
 		esac
 	done
+}
+
+exclude_processed_refs () {
+		if test -r "$cachedir/processed"
+		then
+			cat "$cachedir/processed" |
+			while read rev
+			do
+				debug "read $rev"
+				echo "^$rev"
+			done
+		fi
 }
 
 # Usage: copy_commit REV TREE FLAGS_STR
@@ -900,18 +914,58 @@ cmd_add_commit () {
 }
 
 cmd_map () {
-	oldrev="$1"
-	newrev="$2"
 
-	if test -z "$oldrev"
+	if test -z "$1"
 	then
 		die "You must provide a revision to map"
+	fi
+
+	oldrev=$(git rev-parse --revs-only "$1") || exit $?
+	newrev=
+
+	if test -n "$2"
+	then
+		newrev=$(git rev-parse --revs-only "$2") || exit $?
 	fi
 
 	cache_setup || exit $?
 	cache_set "$oldrev" "$newrev"
 
 	say "Mapped $oldrev => $newrev"
+}
+
+cmd_ignore () {
+	revs=$(git rev-parse $default --revs-only "$@") || exit $?
+	ensure_single_rev $revs
+
+	say "Ignoring $revs"
+
+	cache_setup || exit $?
+
+	git rev-list $revs |
+	while read rev
+	do
+		cache_set "$rev" ""
+	done
+
+	echo "$revs" >>"$cachedir/processed"
+}
+
+cmd_use () {
+	revs=$(git rev-parse $default --revs-only "$@") || exit $?
+	ensure_single_rev $revs
+
+	say "Using existing subtree $revs"
+
+	cache_setup || exit $?
+
+	git rev-list $revs |
+	while read rev
+	do
+		cache_set "$rev" "$rev"
+	done
+
+	echo "$revs" >>"$cachedir/processed"
 }
 
 # Usage: cmd_split [REV]
@@ -948,7 +1002,7 @@ cmd_split () {
 		done || exit $?
 	fi
 
-	unrevs="$(find_existing_splits "$dir" "$rev")" || exit $?
+	unrevs="$(find_existing_splits "$dir" "$revs") $(exclude_processed_refs)" || exit $?
 
 	mainline="$(find_mainline_ref "$dir" "$revs")"
 	if test -n "$mainline"
