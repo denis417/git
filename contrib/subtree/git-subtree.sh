@@ -32,6 +32,8 @@ onto=         try connecting new tree to an existing one
 rejoin        merge the new branch back into HEAD
 clear-cache   reset the subtree mapping cache
  options for 'add', 'merge', and 'pull'
+accept-theirs use 'theirs' strategy for merging
+ options for 'pull'
 squash        merge subtree changes as a single commit
 "
 eval "$(echo "$OPTS_SPEC" | git rev-parse --parseopt -- "$@" || echo exit $?)"
@@ -53,6 +55,7 @@ squash=
 message=
 prefix=
 clearcache=
+accept_theirs=
 
 debug () {
 	if test -n "$debug"
@@ -144,6 +147,9 @@ do
 		;;
 	--no-ignore-joins)
 		ignore_joins=
+		;;
+	--accept-theirs)
+		accept_theirs=1
 		;;
 	--squash)
 		squash=1
@@ -966,22 +972,34 @@ cmd_merge () {
 		rev="$new"
 	fi
 
+	git_merge_args=
+
+	if test -n "$message"
+	then
+		git_merge_args=--message=\"$message\"
+	fi
+
+	if test -n "$accept_theirs"
+	then
+		git_merge_args="$git_merge_args -Xtheirs"
+	fi
+
 	version=$(git version)
 	if test "$version" \< "git version 1.7"
 	then
-		if test -n "$message"
-		then
-			git merge -s subtree --message="$message" "$rev"
-		else
+		if test -z "$git_merge_args"
+		then		
 			git merge -s subtree "$rev"
+		else
+			git merge -s subtree $git_merge_args "$rev"
 		fi
 	else
-		if test -n "$message"
+		if test -z "$git_merge_args"
 		then
-			git merge -Xsubtree="$prefix" \
-				--message="$message" "$rev"
+			git merge -Xsubtree="$prefix" $rev			
 		else
-			git merge -Xsubtree="$prefix" $rev
+			git merge -Xsubtree="$prefix" \
+				$git_merge_args "$rev"
 		fi
 	fi
 }
