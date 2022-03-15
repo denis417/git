@@ -325,17 +325,7 @@ cache_miss () {
 	done
 }
 
-# Usage: check_parents [REVS...]
-check_parents () {
-	missed=$(cache_miss "$@") || exit $?
-	local indent=$(($indent + 1))
-	for miss in $missed
-	do
-		debug "unprocessed parent commit: $miss ($indent)"
-		process_split_commit "$miss" ""
-	done
-}
-
+# Usage: cache_set OLD_REV NEW_REV
 cache_set () {
 	assert test $# = 2
 	oldrev="$1"
@@ -349,6 +339,7 @@ cache_set () {
 	echo "$newrev" >"$cachedir/$oldrev"
 }
 
+# Usage: cache_set_if_unset OLD_REV NEW_REV
 cache_set_if_unset () {
 	oldrev="$1"
 	newrev="$2"
@@ -771,6 +762,7 @@ copy_or_skip () {
 	then
 		echo $identical
 	else
+		debug "copy: $rev"
 		copy_commit "$rev" "$tree" "$p" || exit $?
 	fi
 }
@@ -795,67 +787,113 @@ ensure_valid_ref_format () {
 		die "'$1' does not look like a ref"
 }
 
+# Usage: push_rev_to_split STR
+push_rev_to_split () {
+	StackSplit=$(($StackSplit + 1))
+	eval "ItemCheck$StackSplit=\"$1\""
+}
+
+# Usage: pop_rev_to_split
+pop_rev_to_split () {
+	# is there a way to return a value differently in true posix style and without subshell?
+	pop_rev_to_split_result=$(eval "echo \${ItemCheck$StackSplit}")
+	eval "unset ItemCheck$StackSplit"
+	StackSplit=$(($StackSplit - 1))
+}
+
 # Usage: process_split_commit REV PARENTS
 process_split_commit () {
-	assert test $# = 2
-	local rev="$1"
-	local parents="$2"
+	assert test $# -eq 2
+	push_rev_to_split "$1 true $2" || exit $?
 
-	if test $indent -eq 0
-	then
-		revcount=$(($revcount + 1))
-	else
-		# processing commit without normal parent information;
-		# fetch from repo
-		parents=$(git rev-parse "$rev^@")
-		extracount=$(($extracount + 1))
-	fi
+	while test $StackSplit -gt 1 || test $StackSplit -eq 1
+	do
+		pop_rev_to_split
+		set $pop_rev_to_split_result
 
-	progress "$revcount/$revmax ($createcount) [$extracount]"
+		rev=$1
+		first_time=$2
+		shift;shift
+		parents="$*"
 
-	debug "Processing commit: $rev ($indent)"
-	local indent=$(($indent + 1))
-	exists=$(cache_get "$rev") || exit $?
-	if test -z "$(cache_miss "$rev")"
-	then
-		debug "prior: $exists"
-		return
-	fi
-	createcount=$(($createcount + 1))
-	debug "parents: $parents"
-	check_parents $parents
-	newparents=$(cache_get $parents) || exit $?
-	debug "newparents: $newparents"
+		debug "rev: $rev"
+		debug "first_time: $first_time"
+		debug "parents: $parents"
 
-	tree=$(subtree_for_commit "$rev" "$dir") || exit $?
-	debug "tree is: $tree"
-
-	# ugly.  is there no better way to tell if this is a subtree
-	# vs. a mainline commit?  Does it matter?
-	if test -z "$tree"
-	then
-		if test -n "$newparents"
+		if test "$first_time" = "true"
 		then
-			if test "$newparents" = "$parents"
+			if test $indent -eq 0
 			then
-				# if all parents were subtrees, this can be a subtree commit
-				cache_set "$rev" "$rev"
+				revcount=$(($revcount + 1))
 			else
-				# a mainline commit with tree missing is equivalent to the initial commit
-				cache_set "$rev" ""
+				# processing commit without normal parent information;
+				# fetch from repo
+				parents=$(git rev-parse "$rev^@" | tr -s "\n" " " | sed 's/[[:blank:]]*$//')
+				extracount=$(($extracount + 1))
 			fi
-		else
-			# no parents with valid subtree mappings means a commit prior to subtree add
-			cache_set "$rev" ""
-		fi
-		return
-	fi
 
-	newrev=$(copy_or_skip "$rev" "$tree" "$newparents") || exit $?
-	debug "newrev is: $newrev"
-	cache_set "$rev" "$newrev"
-	cache_set latest_new "$newrev"
-	cache_set latest_old "$rev"
+			progress "$revcount/$revmax ($createcount) [$extracount]"
+
+			debug "Processing check commit: $rev ($indent)"
+			local indent=$(($indent + 1))
+			exists=$(cache_get "$rev") || exit $?
+			if test -z "$(cache_miss "$rev")"
+			then
+				debug "prior: $exists"
+				continue
+			fi
+			createcount=$(($createcount + 1))
+			debug "parents: $parents"
+
+			missed=$(cache_miss $parents)
+
+			push_rev_to_split "$rev false $parents"
+
+			for miss in $missed
+			do
+				debug "unprocessed parent commit: $miss ($indent)"
+				push_rev_to_split "$miss true"
+			done
+		else
+			debug "Processing split commit: $rev ($indent)"
+
+			newparents=$(cache_get $parents | tr -s "\n" " " | sed 's/[[:blank:]]*$//') || exit $?
+			debug "newparents: $newparents"
+
+			tree=$(subtree_for_commit "$rev" "$dir")  || exit $?
+			debug "tree is: $tree"
+
+			# ugly.  is there no better way to tell if this is a subtree
+			# vs. a mainline commit?  Does it matter?
+			if test -z "$tree"
+			then
+				if test -n "$newparents"
+				then
+					if test "$newparents" = "$parents"
+					then
+						# if all parents were subtrees, this can be a subtree commit
+						cache_set "$rev" "$rev"
+						debug "subtree: $rev"
+					else
+						# a mainline commit with tree missing is equivalent to the initial commit
+						cache_set "$rev" ""
+						debug "initial: $rev"
+					fi
+				else
+					# no parents with valid subtree mappings means a commit prior to subtree add
+					cache_set "$rev" ""
+					debug "subtree add: $rev"
+				fi
+				continue
+			fi
+
+			newrev=$(copy_or_skip "$rev" "$tree" "$newparents") || exit $?
+			debug "newrev is: $newrev"
+			cache_set "$rev" "$newrev"
+			cache_set latest_new "$newrev"
+			cache_set latest_old "$rev"
+		fi
+	done || exit $?
 }
 
 # Usage: cmd_add REV
