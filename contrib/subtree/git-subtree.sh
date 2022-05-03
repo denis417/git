@@ -4,7 +4,6 @@
 #
 # Copyright (C) 2009 Avery Pennarun <apenwarr@gmail.com>
 #
-
 if test $# -eq 0
 then
 	set -- -h
@@ -393,6 +392,16 @@ find_existing_splits () {
 				debug "  Prior: $main -> $sub"
 				cache_set_if_unset $main $sub
 				cache_set_if_unset $sub $sub
+
+				git rev-list $sub |
+				while read rev
+				do
+					# the 'sub' history is already just the subdir, so
+					# any parent we find there we can set to cache
+					debug "  cache: $rev"
+					cache_set_if_unset "$rev" "$rev"
+				done
+
 				try_remove_previous "$main"
 				try_remove_previous "$sub"
 			fi
@@ -746,13 +755,6 @@ process_split_commit () {
 			# vs. a mainline commit?  Does it matter?
 			if test -z "$tree"
 			then
-				if test -z "$parents" && test -z "$newparents"
-				then
-					# if all parents are empty, this is init commit of subtree
-						cache_set "$rev" "$rev"
-						debug "subtree init commit: $rev"
-						continue
-				fi
 				if test -n "$newparents"
 				then
 					if test "$newparents" = "$parents"
