@@ -46,9 +46,9 @@ b,branch=     create a new branch from the split subtree
 ignore-joins  ignore prior --rejoin commits
 onto=         try connecting new tree to an existing one
 rejoin        merge the new branch back into HEAD
- options for 'add' and 'merge' (also: 'pull', 'split --rejoin', and 'push --rejoin')
+ options for 'split', 'push', 'map', 'ignore' and 'use'
 clear-cache   reset the subtree mapping cache
- options for 'add', 'merge', and 'pull'
+ options for 'add' and 'merge' (also: 'pull', 'split --rejoin', and 'push --rejoin')
 squash        merge subtree changes as a single commit
 m,message=    use the given message as the commit message for the merge commit
 "
@@ -115,6 +115,7 @@ main () {
 	arg_split_rejoin=
 	allow_split=
 	allow_addmerge=
+	allow_clear_cache=
 	while test $# -gt 0
 	do
 		opt="$1"
@@ -136,12 +137,16 @@ main () {
 	done
 	arg_command=$1
 	case "$arg_command" in
-	add|merge|pull|map|ignore|use)
+	add|merge|pull)
 		allow_addmerge=1
 		;;
 	split|push)
 		allow_split=1
 		allow_addmerge=$arg_split_rejoin
+		allow_clear_cache=1
+		;;
+	map|ignore|use)
+		allow_clear_cache=1
 		;;
 	*)
 		die "Unknown command '$arg_command'"
@@ -214,7 +219,7 @@ main () {
 			test -n "$allow_split" || die "The '$opt' flag does not make sense with 'git subtree $arg_command'."
 			;;
 		--clear-cache)
-			test -n "$allow_split" || die "The '$opt' flag does not make sense with 'git subtree $arg_command'."
+			test -n "$allow_clear_cache" || die "The '$opt' flag does not make sense with 'git subtree $arg_command'."
 			clearcache=1
 			;;
 		--ignore-joins)
@@ -273,7 +278,7 @@ main () {
 # Usage: cache_setup
 cache_setup () {
   	assert test $# = 0
-	cachedir="$GIT_DIR/subtree-cache/$prefix"
+	cachedir="$GIT_DIR/subtree-cache/$arg_prefix"
 	if test -n "$clearcache"
 	then
 		debug "Clearing cache"
@@ -314,7 +319,7 @@ check_parents () {
 	local indent=$(($indent + 1))
 	for miss in $missed
 	do
-		debug "  unprocessed parent commit: $miss ($indent)"
+		debug "unprocessed parent commit: $miss ($indent)"
 		process_split_commit "$miss" ""
 	done
 }
@@ -468,6 +473,7 @@ find_existing_splits () {
 	done || exit $?
 }
 
+# Usage: copy_commit DIR REVS
 find_mainline_ref () {
 	debug "Looking for first split..."
 	dir="$1"
@@ -483,9 +489,10 @@ find_mainline_ref () {
 			return
 			;;
 		esac
-	done
+	done || exit $?
 }
 
+# Usage: exclude_processed_refs
 exclude_processed_refs () {
 		if test -r "$cachedir/processed"
 		then
@@ -908,6 +915,7 @@ cmd_add_commit () {
 	say >&2 "Added dir '$dir'"
 }
 
+# Usage: cmd_map MAINLINEREV SUBTREEREV
 cmd_map () {
 
 	if test -z "$1"
@@ -929,38 +937,48 @@ cmd_map () {
 	say "Mapped $oldrev => $newrev"
 }
 
+# Usage: cmd_ignore REV
 cmd_ignore () {
-	revs=$(git rev-parse $default --revs-only "$@") || exit $?
-	ensure_single_rev $revs
+	if test $# -ne 1
+	then
+		die "You must provide exactly one revision.  Got: '$@'"
+	fi
 
-	say "Ignoring $revs"
+	rev=$(git rev-parse $default --revs-only "$@") || exit $?
+
+	say "Ignoring rev"
 
 	cache_setup || exit $?
 
-	git rev-list $revs |
-	while read rev
+	git rev-list $rev |
+	while read ignore_rev
 	do
-		cache_set "$rev" ""
+		cache_set "$ignore_rev" ""
 	done
 
-	echo "$revs" >>"$cachedir/processed"
+	echo "$rev" >>"$cachedir/processed"
 }
 
+# Usage: cmd_use REV
 cmd_use () {
-	revs=$(git rev-parse $default --revs-only "$@") || exit $?
-	ensure_single_rev $revs
+	if test $# -ne 1
+	then
+		die "You must provide exactly one revision.  Got: '$@'"
+	fi
 
-	say "Using existing subtree $revs"
+	rev=$(git rev-parse $default --revs-only "$@") || exit $?
+
+	say "Using existing subtree $rev"
 
 	cache_setup || exit $?
 
-	git rev-list $revs |
-	while read rev
+	git rev-list $rev |
+	while read use_rev
 	do
-		cache_set "$rev" "$rev"
+		cache_set "$use_rev" "$use_rev"
 	done
 
-	echo "$revs" >>"$cachedir/processed"
+	echo "$rev" >>"$cachedir/processed"
 }
 
 # Usage: cmd_split [REV]
@@ -988,25 +1006,25 @@ cmd_split () {
 	then
 		debug "Reading history for --onto=$arg_split_onto..."
 		git rev-list $arg_split_onto |
-		while read rev
+		while read onto_rev
 		do
 			# the 'onto' history is already just the subdir, so
 			# any parent we find there can be used verbatim
-			debug "cache: $rev"
-			cache_set_if_unset "$rev" "$rev"
+			debug "cache: $onto_rev"
+			cache_set_if_unset "$onto_rev" "$onto_rev"
 		done || exit $?
 	fi
 
-	unrevs="$(find_existing_splits "$dir" "$revs") $(exclude_processed_refs)" || exit $?
+	unrevs="$(find_existing_splits "$dir" "$rev") $(exclude_processed_refs)" || exit $?
 
-	mainline="$(find_mainline_ref "$dir" "$revs")"
+	mainline="$(find_mainline_ref "$dir" "$rev")"
 	if test -n "$mainline"
 	then
 		debug "Mainline $mainline predates subtree add"
 		git rev-list --topo-order --skip=1 $mainline |
-		while read rev
+		while read mainline_rev
 		do
-			cache_set_if_unset "$rev" ""
+			cache_set_if_unset "$mainline_rev" ""
 		done || exit $?
 	fi
 
@@ -1019,9 +1037,9 @@ cmd_split () {
 	createcount=0
 	extracount=0
 	eval "$grl" |
-	while read rev parents
+	while read grl_rev parents
 	do
-		process_split_commit "$rev" "$parents"
+		process_split_commit "$grl_rev" "$parents" || exit $?
 	done || exit $?
 
 	latest_new=$(cache_get latest_new) || exit $?

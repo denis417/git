@@ -13,6 +13,9 @@ SYNOPSIS
 'git subtree' [<options>] -P <prefix> add <repository> <remote-ref>
 'git subtree' [<options>] -P <prefix> merge <local-commit>
 'git subtree' [<options>] -P <prefix> split [<local-commit>]
+`git subtree` [<options>] -P <prefix> map <mainline> <subtree>
+`git subtree` [<options>] -P <prefix> ignore <commit>
+`git subtree` [<options>] -P <prefix> use <commit>
 
 [verse]
 'git subtree' [<options>] -P <prefix> pull <repository> <remote-ref>
@@ -166,7 +169,6 @@ OPTIONS FOR 'add' AND 'merge' (ALSO: 'pull', 'split --rejoin', AND 'push --rejoi
 These options for 'add' and 'merge' may also be given to 'pull' (which
 wraps 'merge'), 'split --rejoin' (which wraps either 'add' or 'merge'
 as appropriate), and 'push --rejoin' (which wraps 'split --rejoin').
-
 
 --squash::
 	Instead of merging the entire history from the subtree project, produce
