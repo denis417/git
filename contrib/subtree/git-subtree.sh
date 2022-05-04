@@ -46,6 +46,8 @@ b,branch=     create a new branch from the split subtree
 ignore-joins  ignore prior --rejoin commits
 onto=         try connecting new tree to an existing one
 rejoin        merge the new branch back into HEAD
+ options for 'merge' and 'pull'
+accept-theirs use 'theirs' strategy for merging
  options for 'split', 'push', 'map', 'ignore' and 'use'
 clear-cache   reset the subtree mapping cache
  options for 'add' and 'merge' (also: 'pull', 'split --rejoin', and 'push --rejoin')
@@ -114,7 +116,8 @@ main () {
 	# "real" flag parsing.
 	arg_split_rejoin=
 	allow_split=
-	allow_addmerge=
+	allow_add=
+	allow_merge=
 	allow_clear_cache=
 	while test $# -gt 0
 	do
@@ -137,12 +140,16 @@ main () {
 	done
 	arg_command=$1
 	case "$arg_command" in
-	add|merge|pull)
-		allow_addmerge=1
+	merge|pull)
+		allow_merge=1
+		;;
+	add)
+		allow_add=1
 		;;
 	split|push)
 		allow_split=1
-		allow_addmerge=$arg_split_rejoin
+		allow_merge=$arg_split_rejoin
+		allow_add=$arg_split_rejoin
 		allow_clear_cache=1
 		;;
 	map|ignore|use)
@@ -165,6 +172,7 @@ main () {
 	arg_addmerge_squash=
 	arg_addmerge_message=
 	clearcache=
+	accept_theirs=
 	while test $# -gt 0
 	do
 		opt="$1"
@@ -196,7 +204,7 @@ main () {
 			shift
 			;;
 		-m)
-			test -n "$allow_addmerge" || die "The '$opt' flag does not make sense with 'git subtree $arg_command'."
+			test -n "$allow_add" -o -n "$allow_merge" || die "The '$opt' flag does not make sense with 'git subtree $arg_command'."
 			arg_addmerge_message="$1"
 			shift
 			;;
@@ -231,12 +239,16 @@ main () {
 			arg_split_ignore_joins=
 			;;
 		--squash)
-			test -n "$allow_addmerge" || die "The '$opt' flag does not make sense with 'git subtree $arg_command'."
+			test -n "$allow_add" -o -n "$allow_merge" || die "The '$opt' flag does not make sense with 'git subtree $arg_command'."
 			arg_addmerge_squash=1
 			;;
 		--no-squash)
-			test -n "$allow_addmerge" || die "The '$opt' flag does not make sense with 'git subtree $arg_command'."
+			test -n "$allow_add" -o -n "$allow_merge" || die "The '$opt' flag does not make sense with 'git subtree $arg_command'."
 			arg_addmerge_squash=
+			;;
+		--accept-theirs)
+			test -n "$allow_merge" || die "The '$opt' flag does not make sense with 'git subtree $arg_command'."
+			accept_theirs=1
 			;;
 		--)
 			break
@@ -1108,10 +1120,22 @@ cmd_merge () {
 		rev="$new"
 	fi
 
+	git_merge_args=
+
 	if test -n "$arg_addmerge_message"
 	then
+		git_merge_args="--message=\"$message\""
+	fi
+
+	if test -n "$accept_theirs"
+	then
+		git_merge_args="$git_merge_args -Xtheirs"
+	fi
+
+	if test -n "$git_merge_args"
+	then
 		git merge --no-ff -Xsubtree="$arg_prefix" \
-			--message="$arg_addmerge_message" "$rev"
+				$git_merge_args "$rev"
 	else
 		git merge --no-ff -Xsubtree="$arg_prefix" $rev
 	fi
