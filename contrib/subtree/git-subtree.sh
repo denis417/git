@@ -475,6 +475,16 @@ find_existing_splits () {
 				debug "  Prior: $main -> $sub"
 				cache_set_if_unset $main $sub
 				cache_set_if_unset $sub $sub
+
+				git rev-list $sub |
+				while read rev
+				do
+					# the 'sub' history is already just the subdir, so
+					# any parent we find there we can set to cache
+					debug "cache: $rev"
+					cache_set_if_unset "$rev" "$rev"
+				done
+
 				try_remove_previous "$main"
 				try_remove_previous "$sub"
 			fi
